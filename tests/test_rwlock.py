@@ -1,5 +1,5 @@
 import threading
-
+import pytest
 import logging
 from easypy.concurrency import concurrent
 from easypy.sync import RWLock
@@ -76,3 +76,29 @@ def test_rwlock():
         main_ctrl.clear()
         logging.info("write lock released")
         assert not state.reading and not state.writing
+
+
+def test_rwlock_different_threads():
+    lock = RWLock("test")
+    e = threading.Event()
+
+    def a(id=None):
+        lock.acquire(id)
+        e.wait()
+
+    def b(id=None):
+        lock.release(id)
+        e.set()
+
+    with concurrent(a):
+        assert lock.owners
+        with pytest.raises(RuntimeError):
+            b()
+        e.set()
+        assert lock.owners
+
+    with concurrent(a, "same"):
+        assert lock.owners
+        with concurrent(b, "same"):
+            pass
+        assert lock.owners
