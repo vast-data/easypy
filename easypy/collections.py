@@ -813,8 +813,9 @@ def grouped(sequence, key=None, transform=None):
         key = lambda x: x
     if not transform:
         transform = lambda x: x
+    d = []
     for item in sequence:
-        groups.setdefault(key(item), []).append(transform(item))
+        groups.setdefault(key(item), d).append(transform(item))
     return groups
 
 
