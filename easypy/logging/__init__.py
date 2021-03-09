@@ -128,11 +128,11 @@ class ContextableLoggerMixin(object):
                 stack.enter_context(self.progress_bar())
             yield
 
-    def suppressed(self):
+    def suppressed(self, level=True):
         """
         Context manager - Supress all logging to the console from the calling thread
         """
-        return ThreadControl.CONTEXT(silenced=True)
+        return ThreadControl.CONTEXT(silenced=level)
 
     def solo(self):
         """
@@ -432,7 +432,7 @@ def initialize(*, graphical=AUTO, coloring=AUTO, indentation=0, context={}, patc
         if patch:
             ContextProcessor().push_application()
             ThreadControl().push_application()
-            logbook.StderrHandler.__bases__ = logbook.StderrHandler.__bases__ + (ConsoleHandlerMixin,)
+            logbook.StderrHandler.__bases__ = (ConsoleHandlerMixin,) + logbook.StderrHandler.__bases__
 
     else:
         raise NotImplementedError("No support for %s as a logging framework" % framework)
