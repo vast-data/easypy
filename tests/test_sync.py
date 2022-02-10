@@ -18,6 +18,7 @@ from easypy.sync import TagAlongThread
 from easypy.sync import LoggedRLock, LockLeaseExpired
 from easypy.sync import SynchronizedSingleton
 from easypy.sync import LoggedCondition
+from easypy.sync import RWLock
 
 from .test_logging import get_log  # noqa; pytest fixture
 
@@ -835,3 +836,22 @@ def test_wait_log_predicate(get_log):
     durations = re.findall('Still waiting after (.*?): bad attempt', get_log())
     rounded_durations = [round(Duration(d), 2) for d in durations]
     assert rounded_durations == [0.2, 0.4], 'expected logs at 200ms and 400ms, got %s' % (durations,)
+
+def test_wrlock_exclusive_timeout():
+    wrlock = RWLock()
+    
+    def acquire_lock():
+        nonlocal wrlock
+        wrlock.acquire()
+        sleep(1)
+        wrlock.release()
+    
+    t1 = threading.Thread(target=acquire_lock)
+    t1.start()
+    
+    sleep(0.01)
+    with pytest.raises(TimeoutException):
+        with wrlock.exclusive(timeout=0.5):
+            pass
+    
+    t1.join()
