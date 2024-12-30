@@ -3,6 +3,7 @@ This module monkey-patches python's (3.x) threading module so that we can find w
 This is useful in our contextualized logging, so that threads inherit logging context from their 'parent'.
 """
 import sys
+from collections import defaultdict
 from importlib import import_module
 from uuid import uuid4
 from weakref import WeakKeyDictionary
@@ -42,17 +43,25 @@ def get_thread_uuid(thread=None):
 
 
 _REGISTER_GREENLETS = False
+_FRAME_SNAPSHOTS_REGISTRY = defaultdict(dict)
+
 _orig_start_new_thread = _thread.start_new_thread
 
 
 def start_new_thread(target, *args, **kwargs):
     """
-    A wrapper for the built in 'start_new_thread' used to capture the parent of each new thread.
+    A wrapper for the built-in 'start_new_thread' used to capture the parent of each new thread.
     """
-    parent_uuid = get_thread_uuid()
+    parent_thread = threading.current_thread()
+    parent_uuid = get_thread_uuid(parent_thread)
+    parent_frame = sys._getframe(0)
 
     def wrapper(*args, **kwargs):
+        nonlocal parent_thread, parent_uuid, parent_frame
         thread = threading.current_thread()
+
+        _FRAME_SNAPSHOTS_REGISTRY[parent_thread.ident][thread.ident] = parent_frame
+
         uuid = get_thread_uuid(thread)
         UUIDS_TREE[uuid] = parent_uuid
         if _REGISTER_GREENLETS:
@@ -168,27 +177,77 @@ else:
         yield from sys._current_frames().items()
 
 
+class FrameWrapper:
+    """This wrapper adds the `f_thread_ident` attribute, which stores the thread
+    identifier of the current thread. All other attribute accesses are forwarded
+    to the wrapped frame object, making the wrapper behave like the original frame.
+    """
+
+    def __init__(self, frame, thread_ident):
+        self._frame = frame
+        self.f_thread_ident = thread_ident
+
+    def __getattr__(self, name):
+        """Delegate attribute access to the wrapped frame object."""
+        return getattr(self._frame, name)
+
+    def __setattr__(self, name, value):
+        """Allow setting attributes."""
+        if name == "_frame" or name == "f_thread_ident":
+            super().__setattr__(name, value)  # Handle internal attributes
+        else:
+            setattr(self._frame, name, value)  # Delegate to the wrapped frame
+
+    def __repr__(self):
+        """Provide a string representation including the class name and f_thread_ident."""
+        return (
+            f"<{self.__class__.__name__}(frame={repr(self._frame)}, "
+            f"f_thread_ident={self.f_thread_ident})>"
+        )
+
+    def __str__(self):
+        """Provide a readable string for the wrapper."""
+        return str(self._frame)
+
+    def __eq__(self, other):
+        """Equality comparison."""
+        if isinstance(other, self.__class__):
+            return (
+                self._frame == other._frame
+                and self.f_thread_ident == other.f_thread_ident
+            )
+        return self._frame == other
+
+    def __ne__(self, other):
+        """Inequality comparison."""
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        """Make the object hashable."""
+        return hash(self._frame)
+
+    def __dir__(self):
+        """List attributes of the wrapper and wrapped object."""
+        return dir(self._frame) + ["f_thread_ident"]
+
+
 def walk_frames(thread=None, *, across_threads=False):
     """
     Yields the stack frames of the current/specified thread.
 
     :param across_threads: yield frames of ancestor threads.
-    Note that the parent thread might be off to other things, and not actually in the frame that spawned the thread at the tip.
     """
 
     if not thread:
         thread = threading.current_thread()
 
-    frame = dict(iter_thread_frames()).get(thread.ident)
-
+    frame = sys._getframe(0)
     while frame:
-
-        yield frame
-
+        yield FrameWrapper(frame, thread.ident)
         frame = frame.f_back
         if not frame and across_threads and thread.parent:
+            frame = _FRAME_SNAPSHOTS_REGISTRY[thread.parent.ident][thread.ident]
             thread = thread.parent
-            frame = dict(iter_thread_frames()).get(thread.ident)
 
 
 this_module = import_module(__name__)
