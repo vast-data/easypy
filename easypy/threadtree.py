@@ -487,7 +487,7 @@ class ThreadContexts():
         parent_uuid = get_parent_uuid(thread_uuid)
         if parent_uuid:
             parent_ctx = self._get_context_data(parent_uuid, combined=True)
-            ctx = deepcopy(parent_ctx) + ctx
+            ctx = parent_ctx + ctx
         return ctx
 
     def get(self, k, default=None):
