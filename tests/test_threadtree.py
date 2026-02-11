@@ -1,6 +1,6 @@
 import threading
 
-from easypy.threadtree import walk_frames
+from easypy.threadtree import walk_frames, _FRAME_SNAPSHOTS_REGISTRY
 
 
 def collect_frames():
@@ -53,3 +53,4 @@ def test_walk_frames():
     ]
     actual = [frame.f_code.co_name for frame in frames]
     assert actual == expected
+    assert len(_FRAME_SNAPSHOTS_REGISTRY) == 0, "Frame snapshots registry should be empty after threads have finished"
