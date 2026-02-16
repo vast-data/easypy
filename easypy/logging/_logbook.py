@@ -227,10 +227,10 @@ class ContextProcessor(logbook.Processor):
         if extra is not None:
             decoration = extra.pop('decoration', decoration)
 
-        contexts = THREAD_LOGGING_CONTEXT.context
         extra = THREAD_LOGGING_CONTEXT.flatten()
-        extra['context'] = "[%s]" % ";".join(contexts) if contexts else ""
+        contexts = extra['context']
         record.extra.update(extra)
+        record.extra['context'] = "[%s]" % ";".join(contexts) if contexts else ""
         indentation = record.extra['indentation']
 
         indents = chain(repeat(G.graphics.INDENT_SEGMENT, indentation), repeat(decoration, 1))
