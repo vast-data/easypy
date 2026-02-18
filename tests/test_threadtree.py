@@ -1,7 +1,6 @@
 import threading
 
-from easypy.threadtree import walk_frames, ThreadContexts
-
+from easypy.threadtree import walk_frames, _FRAME_SNAPSHOTS_REGISTRY, ThreadContexts
 
 def collect_frames():
     """Collect only interesting frames"""
@@ -53,6 +52,7 @@ def test_walk_frames():
     ]
     actual = [frame.f_code.co_name for frame in frames]
     assert actual == expected
+    assert len(_FRAME_SNAPSHOTS_REGISTRY) == 0, "Frame snapshots registry should be empty after threads have finished"
 
 
 def test_thread_contexts_basic():

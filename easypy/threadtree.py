@@ -97,6 +97,9 @@ def start_new_thread(target, *args, **kwargs):
         try:
             return target(*args, **kwargs)
         finally:
+            # remove the snapshot connecting parent → this thread
+            _FRAME_SNAPSHOTS_REGISTRY.pop((parent_thread.uuid, thread.uuid), None)
+
             IDENT_TO_UUID.pop(thread.ident)
 
     return _orig_start_new_thread(wrapper, *args, **kwargs)
