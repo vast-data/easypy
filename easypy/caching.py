@@ -181,6 +181,10 @@ class _CachedException(tuple):
     pass
 
 
+def _default_key_func(*args, **kwargs):
+    return _make_key(args, kwargs, False)
+
+
 class _TimeCache(DecoratingDescriptor):
 
     def __init__(self, func, **kwargs):
@@ -196,8 +200,7 @@ class _TimeCache(DecoratingDescriptor):
 
         key_func = kwargs['key_func']
         if not key_func:
-            def key_func(*args, **kwargs):
-                return _make_key(args, kwargs, False)
+            key_func = _default_key_func
         self._key_func = key_func
 
         self.NOT_FOUND = object()
@@ -210,7 +213,11 @@ class _TimeCache(DecoratingDescriptor):
     def make_key(self, args, kwargs):
         bound = self.sig.bind(*args, **kwargs)
         _apply_defaults(bound)
-        return kwargs_resilient(self._key_func)(**bound.arguments)
+
+        if self._key_func is _default_key_func:
+            return self._key_func(**bound.arguments)
+        else:
+            return kwargs_resilient(self._key_func)(**bound.arguments)
 
     def key_func(self, func):
         """
