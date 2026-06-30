@@ -149,7 +149,7 @@ def parse_fuzzy_time(ts, baseline=None):
     return time.mktime(time_tuple) - offset
 
 
-Node = namedtuple("Node", "fmt args kwargs children")
+Node = namedtuple("Node", "fmt args kwargs children footer_fmt", defaults=[None])
 
 
 class IndentableTextBuffer():
@@ -202,9 +202,9 @@ class IndentableTextBuffer():
         self.current.children.extend(other.root.children)
 
     @contextmanager
-    def indent(self, fmt, *args, **kwargs):
+    def indent(self, fmt, *args, footer_fmt=None, **kwargs):
         parent = self.current
-        self.current = Node(fmt, args, kwargs, [])
+        self.current = Node(fmt, args, kwargs, [], footer_fmt)
         parent.children.append(self.current)
         yield
         self.current = parent
@@ -253,7 +253,14 @@ class IndentableTextBuffer():
                 buff.write(header.ljust(width-1, G.LINE) + G.SECTION_OPEN + "\n")
                 for child in elem.children:
                     write_tree(child, depth+1)
-                footer = (G.INDENT_SEGMENT*depth + G.INDENT_CLOSE + G.LINE * (width-len(G.INDENT_SEGMENT)*(depth+1)-len(txt)+2) + txt)
+                if elem.footer_fmt:
+                    footer_label = elem.footer_fmt.format(*elem.args, **elem.kwargs)
+                elif elem.fmt:
+                    footer_label = elem.fmt.format(*elem.args, **elem.kwargs)
+                else:
+                    footer_label = ""
+                footer_txt = (G.SEGMENT_END + footer_label + G.SEGMENT_START) if footer_label else ""
+                footer = (G.INDENT_SEGMENT*depth + G.INDENT_CLOSE + G.LINE * (width-len(G.INDENT_SEGMENT)*(depth+1)-len(footer_txt)+2) + footer_txt)
                 buff.write(footer + G.SECTION_CLOSE + "\n")
 
         write_tree(self.root)

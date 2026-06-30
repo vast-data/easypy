@@ -93,6 +93,10 @@ from easypy.decorations import parametrizeable_decorator
 
 MAX_THREAD_POOL_SIZE = int(os.environ.get('EASYPY_MAX_THREAD_POOL_SIZE', 50))
 DISABLE_CONCURRENCY = yesno_to_bool(os.getenv("EASYPY_DISABLE_CONCURRENCY", "no"))
+# New unified deduplication flag: collapses fully identical sub-exceptions into one box.
+SHOULD_DEDUPLICATE_MULTIEXCEPTION = yesno_to_bool(os.getenv("EASYPY_MULTIEXCEPTION_DEDUP", "true"))
+# The original TB coalescence flag: show traceback once, point duplicates to it.
+# Kept as an independent flag for backwards compatibility.
 SHOULD_COALESCE_DUPLICATED_TBS = yesno_to_bool(os.getenv('EASYPY_MULTIEXCEPTION_COALESCE_DUPLICATED_TBS', 'true'))
 
 this_module = import_module(__name__)
@@ -234,7 +238,7 @@ class MultiException(PException, metaclass=MultiExceptionMeta):
     CORE_COMMON_TYPE = BaseException  # the fallback core common type
     DEPTH = 0
     template = "{0.common_type.__qualname__} raised from concurrent invocation (x{0.count}/{0.invocations_count})"
-    tb_coalesce_template = "  See exception ({}) for traceback"
+    tb_coalesce_template = "  See exception [{}] for traceback"
 
     def __reduce__(self):
         return (MultiException, (self.exceptions, [PickledFuture(ctx=f.ctx, funcname=f.funcname) for f in self.futures]))
@@ -317,36 +321,87 @@ class MultiException(PException, metaclass=MultiExceptionMeta):
 
         add_details(self)
 
-        for exc_num, exc in enumerate(self.actual, 1):
-            show_traceback = hasattr(exc, "__traceback__") and getattr(exc, 'traceback', None) is not False
-            full_exc_num_with_same_tb = None
-            full_exc_num = f"{exc_num_prefix}{exc_num}"
+        # Two-pass approach: first group identical exceptions, then render one box per group.
+        # Grouping key: (type_name, message_str, traceback_fingerprint)
+        groups = {}
+        order = []
+        # Full dedup: collapse identical (type+message+traceback) into one box.
+        # TB coalescence: show traceback once, point duplicates to it.
+        # These are independent: dedup requires coalescence to be on too.
+        should_dedup = SHOULD_DEDUPLICATE_MULTIEXCEPTION
+        should_coalesce = should_dedup or SHOULD_COALESCE_DUPLICATED_TBS
 
-            if SHOULD_COALESCE_DUPLICATED_TBS and show_traceback:
-                if tb := tuple((frame.filename, frame.lineno) for frame in extract_tb(exc.__traceback__)):
+        for exc in self.actual:
+            if should_dedup:
+                # compute traceback fingerprint if present
+                if hasattr(exc, "__traceback__") and getattr(exc, "traceback", None) is not False and exc.__traceback__:
+                    tb = tuple((frame.filename, frame.lineno) for frame in extract_tb(exc.__traceback__))
+                else:
+                    tb = None
+                key = (exc.__class__.__qualname__, str(exc), tb)
+            else:
+                # unique key per exception to avoid dedup
+                key = (object(), id(exc))
+            if key not in groups:
+                groups[key] = [exc]
+                order.append(key)
+            else:
+                groups[key].append(exc)
+
+        # Render pass: one box per group, numbering is global across all exceptions
+        # (including omitted ones), so positions map 1:1 to the original self.actual list.
+        global_pos = 1
+        for key in order:
+            group = groups[key]
+            representative = group[0]
+            count = len(group)
+
+            show_traceback = hasattr(representative, "__traceback__") and getattr(representative, "traceback", None) is not False
+            full_exc_num = f"{exc_num_prefix}{global_pos}"
+            full_exc_num_with_same_tb = None
+
+            if should_coalesce and show_traceback and representative.__traceback__:
+                tb = tuple((frame.filename, frame.lineno) for frame in extract_tb(representative.__traceback__))
+                if tb:
                     if tb in unique_tbs_to_exc_num:
                         full_exc_num_with_same_tb = unique_tbs_to_exc_num[tb]
                     else:
                         unique_tbs_to_exc_num[tb] = full_exc_num
 
+            # Header format: TypeName [pos] ([X-Y] omitted) if collapsed
+            if count > 1:
+                omit_first = global_pos + 1
+                omit_last = global_pos + count - 1
+                omit_first_str = f"{exc_num_prefix}{omit_first}"
+                omit_range = (
+                    f"{omit_first_str}"
+                    if omit_first == omit_last
+                    else f"{omit_first_str}-{exc_num_prefix}{omit_last}"
+                )
+                header_extra = f" ([{omit_range}] omitted)"
+                footer_fmt = f"{{.__class__.__qualname__}} [{full_exc_num}]"
+            else:
+                header_extra = ""
+                footer_fmt = None
 
-            with buff.indent(f"{{.__class__.__qualname__}} ({full_exc_num})", exc):
-                if isinstance(exc, MultiException):
-                    buff.extend(exc._get_buffer(
-                        exc_num_prefix=f"{full_exc_num}.",
-                        unique_tbs_to_exc_num=unique_tbs_to_exc_num,
-                        **kw))
-                elif callable(getattr(exc, "render", None)):
-                    buff.write(exc.render(**kw))
+            global_pos += count
+            with buff.indent(f"{{.__class__.__qualname__}} [{full_exc_num}]{header_extra}", representative, footer_fmt=footer_fmt):
+                if isinstance(representative, MultiException):
+                    buff.extend(
+                        representative._get_buffer(exc_num_prefix=f"{full_exc_num}.", unique_tbs_to_exc_num=unique_tbs_to_exc_num, **kw)
+                    )
+                elif callable(getattr(representative, "render", None)):
+                    buff.write(representative.render(**kw))
                 else:
-                    buff.write("{}", exc)
-                    add_details(exc)
+                    buff.write("{}", representative)
+                    add_details(representative)
+
                 if show_traceback:
-                    buff.write("Traceback:")
                     if full_exc_num_with_same_tb:
                         buff.write(self.tb_coalesce_template.format(full_exc_num_with_same_tb))
                     else:
-                        for line in format_tb(exc.__traceback__):
+                        buff.write("Traceback:")
+                        for line in format_tb(representative.__traceback__):
                             buff.write(traceback_fmt, line.rstrip())
 
         return buff
