@@ -752,18 +752,20 @@ class RWLock(object):
         Acquire the lock as a reader.
         Optionally specify the identity of the reader (defaults to thready identity).
         """
-        while not self.cond.acquire(timeout=15):
-            _logger.debug("%s - waiting...", self)
-
-        if not identifier:
-            identifier = _get_my_ident()
-
         try:
+            while not self.cond.acquire(timeout=15):
+                _logger.debug("%s - waiting...", self)
+
+            if not identifier:
+                identifier = _get_my_ident()
             self.owners[identifier] += 1
             _verbose_logger.debug("%s - acquired (as reader)", self)
             return self
         finally:
-            self.cond.release()
+            try:
+                self.cond.release()
+            except RuntimeError:
+                pass
 
     def __exit__(self, *args):
         self.release()
@@ -773,13 +775,12 @@ class RWLock(object):
         Release the lock as a reader.
         Optionally specify the identity of the reader (defaults to thready identity).
         """
-
-        while not self.cond.acquire(timeout=15):
-            _logger.debug("%s - waiting...", self)
-
-        if not identifier:
-            identifier = _get_my_ident()
         try:
+            while not self.cond.acquire(timeout=15):
+                _logger.debug("%s - waiting...", self)
+
+            if not identifier:
+                identifier = _get_my_ident()
             if not self.owners[identifier]:
                 raise RuntimeError("cannot release un-acquired lock")
             self.owners[identifier] -= 1
@@ -788,22 +789,24 @@ class RWLock(object):
             self.cond.notify()
             _verbose_logger.debug("%s - released (as reader)", self)
         finally:
-            self.cond.release()
+            try:
+                self.cond.release()
+            except RuntimeError:
+                pass
 
     @contextmanager
     def exclusive(self, timeout=None, identifier=None, need_to_wait_message=None):
         t = Timer(expiration=timeout)
-        
-        while not self.cond.acquire(timeout=min(t.remain, 15)):
-            if t.expired:
-                raise TimeoutException()
-            _logger.debug("%s - waiting...", self)
-
-        if not identifier:
-            identifier = _get_my_ident()
-        
-        # wait until this thread is the sole owner of this lock
         try:
+            while not self.cond.acquire(timeout=min(t.remain, 15)):
+                if t.expired:
+                    raise TimeoutException()
+                _logger.debug("%s - waiting...", self)
+
+            if not identifier:
+                identifier = _get_my_ident()
+
+            # wait until this thread is the sole owner of this lock
             while not self.cond.wait_for(lambda: self.owner_count == self.owners[identifier], timeout=min(t.remain, 15)):
                 if t.expired:
                     raise TimeoutException()
@@ -812,24 +815,24 @@ class RWLock(object):
                     _logger.info(need_to_wait_message)
                     need_to_wait_message = None  # only print it once
                 _logger.debug("%s - waiting (for exclusivity)...", self)
-        except TimeoutException:
-            self.cond.release()
-            raise
 
-        self.owners[identifier] += 1
-        self._lease_timer = Timer()
-        _verbose_logger.debug("%s - acquired (as writer)", self)
-
-        try:
-            yield
+            self.owners[identifier] += 1
+            try:
+                self._lease_timer = Timer()
+                _verbose_logger.debug("%s - acquired (as writer)", self)
+                yield
+            finally:
+                _verbose_logger.debug('%s - releasing (as writer)', self)
+                self._lease_timer = None
+                self.owners[identifier] -= 1
+                if not self.owners[identifier]:
+                    self.owners.pop(identifier)  # don't inflate the soft lock keys with threads that does not own it
+                self.cond.notify()
         finally:
-            _verbose_logger.debug('%s - releasing (as writer)', self)
-            self._lease_timer = None
-            self.owners[identifier] -= 1
-            if not self.owners[identifier]:
-                self.owners.pop(identifier)  # don't inflate the soft lock keys with threads that does not own it
-            self.cond.notify()
-            self.cond.release()
+            try:
+                self.cond.release()
+            except RuntimeError:
+                pass
 
 
 SoftLock = RWLock
