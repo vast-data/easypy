@@ -1030,7 +1030,7 @@ class _concurrent(object):
             self.exc = apply_timestamp(exc)
             if IS_GEVENT:
                 raise  # in gevent we should let this exception propagate to the main greenlet
-        except Exception as exc:
+        except BaseException as exc:
             _logger.silent_exception("Exception in thread running %s: %s (traceback can be found in debug-level logs)", self.func, type(exc))
             self.exc = apply_timestamp(exc)
         finally:
