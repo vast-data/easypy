@@ -793,6 +793,7 @@ class RWLock(object):
                 self.cond.release()
             except RuntimeError:
                 pass
+            time.sleep(0)
 
     @contextmanager
     def exclusive(self, timeout=None, identifier=None, need_to_wait_message=None):
@@ -833,6 +834,7 @@ class RWLock(object):
                 self.cond.release()
             except RuntimeError:
                 pass
+            time.sleep(0)
 
 
 SoftLock = RWLock
